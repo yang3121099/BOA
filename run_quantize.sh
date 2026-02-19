@@ -11,6 +11,14 @@
 #   bash run_quantize.sh llama2 4     # only Llama2-7b at 4-bit
 #   bash run_quantize.sh qwen3 3      # only Qwen3-8B at 3-bit
 #
+# Model saving:
+#   Set SAVE_DIR to persist quantized models (fake-quantized, same dtype as original).
+#   Each run saves to:  ${SAVE_DIR}/<model_tag>_w<N>bit/
+#   Leave SAVE_DIR empty (default) to skip saving.
+#
+#   Example:
+#     SAVE_DIR=/data/boa_models bash run_quantize.sh llama2 4
+#
 # Requirements:
 #   - pip install -r requirements.txt
 #   - GPU with sufficient VRAM (>=40GB recommended for 7B/8B models)
@@ -38,7 +46,11 @@ NSAMPLES="${NSAMPLES:-128}"
 # Sequence length (paper uses 2048)
 SEQLEN="${SEQLEN:-2048}"
 
-# Log and output directory
+# Output directory for saved models (leave empty to skip saving)
+# Each job saves to: ${SAVE_DIR}/<tag>_w<N>bit/
+SAVE_DIR="${SAVE_DIR:-}"
+
+# Log directory
 LOG_DIR="logs/quantization"
 mkdir -p "${LOG_DIR}"
 
@@ -68,11 +80,18 @@ run_boa() {
 
     local LOG_FILE="${LOG_DIR}/${TAG}_w${W_BITS}bit.log"
 
+    # Build optional save_path argument
+    local SAVE_ARG=""
+    if [[ -n "${SAVE_DIR}" ]]; then
+        SAVE_ARG="--save_path ${SAVE_DIR}/${TAG}_w${W_BITS}bit"
+    fi
+
     echo "======================================================"
     echo "Model : ${MODEL_PATH}"
     echo "Bits  : ${W_BITS}"
     echo "Options: block_v=true  qparam_comput=Hessian  ${ACT_ROW} ${ACT_COL}"
     echo "Log   : ${LOG_FILE}"
+    [[ -n "${SAVE_ARG}" ]] && echo "Save  : ${SAVE_DIR}/${TAG}_w${W_BITS}bit"
     echo "======================================================"
 
     python main.py \
@@ -85,6 +104,7 @@ run_boa() {
         --block_v \
         ${ACT_ROW} \
         ${ACT_COL} \
+        ${SAVE_ARG} \
         2>&1 | tee "${LOG_FILE}"
 
     echo "Done. Results saved to ${LOG_FILE}"

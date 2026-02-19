@@ -1,6 +1,8 @@
 import time
 from contextlib import redirect_stdout
+from pathlib import Path
 import io
+from transformers import AutoTokenizer
 from utils.model_utils import get_model
 from utils.data_utils import get_calib_data
 from utils.eval_utils import evaluate
@@ -9,7 +11,7 @@ from quantize import boa_fwrd
 
 if __name__ == '__main__':
     args = get_boa_arguments()
-    
+
     # load model
     with redirect_stdout(io.StringIO()) as f:
         llm = get_model(args.llm_path)
@@ -32,9 +34,19 @@ if __name__ == '__main__':
     boa_fwrd(llm, calib_data, qconfigs, boa_opts, hyperparams, args)
     process_time = round(time.time() - tick, 3)
     print(f"Quantization processing time: {process_time}")
-    
+
     # evaluate
     print(args)
     results = evaluate(llm, args)
     results['time'] = process_time
     print(results)
+
+    # save fake-quantized model and tokenizer
+    if args.save_path is not None:
+        save_dir = Path(args.save_path)
+        save_dir.mkdir(parents=True, exist_ok=True)
+        print(f"Saving fake-quantized model to: {save_dir}")
+        llm.save_pretrained(str(save_dir))
+        tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_path)
+        tokenizer.save_pretrained(str(save_dir))
+        print(f"Model and tokenizer saved to: {save_dir}")

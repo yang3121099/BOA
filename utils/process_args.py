@@ -6,6 +6,9 @@ def get_boa_arguments(**parser_kwargs):
 
     parser.add_argument("--cache_dir", type=str, default='cache')
     parser.add_argument("--print_memory_usage", action='store_true')
+    parser.add_argument("--save_path", type=str, default=None,
+                        help='Directory to save the fake-quantized model and tokenizer. '
+                             'If not specified, the model is not saved.')
     
     ## Model
     parser.add_argument("--llm_path", type=str, default='facebook/opt-125m')
