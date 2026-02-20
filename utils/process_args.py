@@ -9,6 +9,13 @@ def get_boa_arguments(**parser_kwargs):
     parser.add_argument("--save_path", type=str, default=None,
                         help='Directory to save the fake-quantized model and tokenizer. '
                              'If not specified, the model is not saved.')
+    parser.add_argument('--num_workers', type=int, default=1,
+                        help='Number of parallel workers for layer-wise quantization within each '
+                             'transformer block. Typical values: 7 for Llama/Qwen (q/k/v/o/gate/up/down). '
+                             'Each worker runs on a dedicated CUDA stream. Default: 1 (sequential).')
+    parser.add_argument('--num_cpu_threads', type=int, default=None,
+                        help='Number of CPU threads for PyTorch intra-op parallelism '
+                             '(torch.set_num_threads). Defaults to PyTorch automatic detection.')
     
     ## Model
     parser.add_argument("--llm_path", type=str, default='facebook/opt-125m')

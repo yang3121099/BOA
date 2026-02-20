@@ -3,18 +3,33 @@ from utils.quant_utils import damping
 
 
 def get_cholesky_of_inverse(H):
+    """Compute Cholesky of H^{-1} for each head.
+
+    First attempts a single batched call so the GPU (or multi-threaded BLAS)
+    can parallelise across all heads at once.  Falls back to the original
+    head-by-head loop with adaptive damping only when the batched call fails
+    due to numerical issues.
+    """
+    try:
+        # Fast path: one batched GPU call — parallelises across heads automatically
+        return torch.linalg.cholesky(
+            torch.cholesky_inverse(torch.linalg.cholesky(H)), upper=True
+        )
+    except torch.linalg.LinAlgError:
+        pass
+
+    # Slow path: per-head with adaptive damping for ill-conditioned heads
     U = torch.zeros_like(H)
     for i in range(len(H)):
-        compute_cholesky = False
-        while not compute_cholesky:
+        done = False
+        while not done:
             try:
                 U[i] = torch.linalg.cholesky(
                     torch.cholesky_inverse(torch.linalg.cholesky(H[i])), upper=True
                 )
-                compute_cholesky = True
-            except:
+                done = True
+            except torch.linalg.LinAlgError:
                 H[i] = damping(H[i])
-    
     return U
 
 

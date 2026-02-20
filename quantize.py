@@ -1,10 +1,30 @@
 import functools
 import torch
+from contextlib import nullcontext
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from quantizers.boa import BoA
 from quantizers.minmax import MinMaxQuantizer
 from utils.model_utils import get_transformer_blocks, get_head_info, get_rotary_emb, cache_first_transformer_input
 from utils.utils import find_layers, cleanup_memory
+
+
+def _quant_layer_task(wrapper, print_memory_usage):
+    """Quantize one linear layer on a dedicated CUDA stream.
+
+    Running each layer on its own stream lets the GPU scheduler overlap
+    independent Cholesky / grid-search / GPTQ kernels across layers.
+    The GIL is released during CUDA calls, so multiple Python threads
+    make genuine concurrent progress.
+    """
+    use_cuda = torch.cuda.is_available()
+    stream = torch.cuda.Stream() if use_cuda else None
+    ctx = torch.cuda.stream(stream) if use_cuda else nullcontext()
+    with torch.no_grad(), ctx:
+        wrapper.quant(print_memory_usage)
+        wrapper.free()
+    if stream is not None:
+        stream.synchronize()
 
 QKV_NAMES = {"query": "self_attn.q_proj", "key": "self_attn.k_proj", "value": "self_attn.v_proj"}
 
@@ -41,12 +61,25 @@ def boa_fwrd(llm, calib_data, qconfigs, boa_opts: dict, hyperparams: dict, args)
         block_v = boa_opts['block_v']
         compute_Hessian(transformer_block, n_heads, n_kv_heads, head_dim, wrappers, quant_inps, block_kwargs, block_v, rotary_matrix)
 
-        # quantize
-        for name in fp_layers:
-            print('-' * 50)
-            print(f">>> Layer: {name}")
-            wrappers[name].quant(args.print_memory_usage)
-            wrappers[name].free()
+        # quantize layers (parallel when num_workers > 1)
+        num_workers = min(len(fp_layers), getattr(args, 'num_workers', 1))
+        if num_workers > 1:
+            print(f'    [parallel quant: {num_workers} workers / {len(fp_layers)} layers]')
+            with ThreadPoolExecutor(max_workers=num_workers) as pool:
+                futures = {
+                    pool.submit(_quant_layer_task, wrappers[name], args.print_memory_usage): name
+                    for name in fp_layers
+                }
+                for future in as_completed(futures):
+                    future.result()   # re-raise any exception from the worker
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+        else:
+            for name in fp_layers:
+                print('-' * 50)
+                print(f">>> Layer: {name}")
+                wrappers[name].quant(args.print_memory_usage)
+                wrappers[name].free()
 
         # cache inputs for next transformer block
         for j in range(len(quant_inps)):

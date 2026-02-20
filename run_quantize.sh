@@ -50,6 +50,22 @@ SEQLEN="${SEQLEN:-2048}"
 # Each job saves to: ${SAVE_DIR}/<tag>_w<N>bit/
 SAVE_DIR="${SAVE_DIR:-}"
 
+# ---- Parallelism --------------------------------------------------------
+# NUM_WORKERS: parallel layer-quant workers per transformer block.
+#   Llama2 / Qwen3 have 7 linear layers per block (q/k/v/o/gate/up/down).
+#   Each worker gets its own CUDA stream → genuine GPU concurrency.
+#   Reduce to 1 if you hit VRAM OOM during quantization.
+NUM_WORKERS="${NUM_WORKERS:-7}"
+
+# NUM_CPU_THREADS: intra-op CPU threads for PyTorch / BLAS / Cholesky.
+#   Set to your physical CPU core count for best utilisation.
+NUM_CPU_THREADS="${NUM_CPU_THREADS:-48}"
+
+# Propagate to OpenMP and MKL so all BLAS calls also see the full core count.
+export OMP_NUM_THREADS="${NUM_CPU_THREADS}"
+export MKL_NUM_THREADS="${NUM_CPU_THREADS}"
+# -------------------------------------------------------------------------
+
 # Log directory
 LOG_DIR="logs/quantization"
 mkdir -p "${LOG_DIR}"
@@ -87,21 +103,24 @@ run_boa() {
     fi
 
     echo "======================================================"
-    echo "Model : ${MODEL_PATH}"
-    echo "Bits  : ${W_BITS}"
-    echo "Options: block_v=true  qparam_comput=Hessian  ${ACT_ROW} ${ACT_COL}"
-    echo "Log   : ${LOG_FILE}"
-    [[ -n "${SAVE_ARG}" ]] && echo "Save  : ${SAVE_DIR}/${TAG}_w${W_BITS}bit"
+    echo "Model   : ${MODEL_PATH}"
+    echo "Bits    : ${W_BITS}"
+    echo "Options : block_v=true  qparam_comput=Hessian  ${ACT_ROW} ${ACT_COL}"
+    echo "Workers : ${NUM_WORKERS} layer-parallel  /  ${NUM_CPU_THREADS} CPU threads"
+    echo "Log     : ${LOG_FILE}"
+    [[ -n "${SAVE_ARG}" ]] && echo "Save    : ${SAVE_DIR}/${TAG}_w${W_BITS}bit"
     echo "======================================================"
 
     python main.py \
-        --llm_path     "${MODEL_PATH}" \
-        --calib_data   "${CALIB_DATA}" \
-        --nsamples     "${NSAMPLES}" \
-        --seqlen       "${SEQLEN}" \
-        --w_bits       "${W_BITS}" \
-        --qparam_comput Hessian \
+        --llm_path        "${MODEL_PATH}" \
+        --calib_data      "${CALIB_DATA}" \
+        --nsamples        "${NSAMPLES}" \
+        --seqlen          "${SEQLEN}" \
+        --w_bits          "${W_BITS}" \
+        --qparam_comput   Hessian \
         --block_v \
+        --num_workers     "${NUM_WORKERS}" \
+        --num_cpu_threads "${NUM_CPU_THREADS}" \
         ${ACT_ROW} \
         ${ACT_COL} \
         ${SAVE_ARG} \
