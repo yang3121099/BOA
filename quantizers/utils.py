@@ -3,18 +3,22 @@ from utils.quant_utils import damping
 
 
 def get_cholesky_of_inverse(H):
-    """Compute Cholesky of H^{-1} for each head.
+    """Compute upper-triangular U such that U.T @ U = H^{-1}.
 
-    First attempts a single batched call so the GPU (or multi-threaded BLAS)
-    can parallelise across all heads at once.  Falls back to the original
-    head-by-head loop with adaptive damping only when the batched call fails
-    due to numerical issues.
+    For positive-definite H with Cholesky factor L (H = L @ L.T), the unique
+    upper-triangular Cholesky factor of H^{-1} is U = L^{-1}, because:
+        U.T @ U = L^{-T} @ L^{-1} = (L @ L.T)^{-1} = H^{-1}
+
+    L^{-1} is computed via torch.linalg.solve_triangular (L @ X = I → X = L^{-1}),
+    which is thread-safe and supports batched inputs for GPU parallelism across heads.
     """
+    d = H.shape[-1]
+    eye = torch.eye(d, device=H.device, dtype=H.dtype).expand_as(H)
+
     try:
-        # Fast path: one batched GPU call — parallelises across heads automatically
-        return torch.linalg.cholesky(
-            torch.linalg.cholesky_inverse(torch.linalg.cholesky(H)), upper=True
-        )
+        # Fast path: one batched solve — parallelises across heads on GPU
+        L = torch.linalg.cholesky(H)
+        return torch.linalg.solve_triangular(L, eye, upper=False)
     except torch.linalg.LinAlgError:
         pass
 
@@ -24,9 +28,8 @@ def get_cholesky_of_inverse(H):
         done = False
         while not done:
             try:
-                U[i] = torch.linalg.cholesky(
-                    torch.linalg.cholesky_inverse(torch.linalg.cholesky(H[i])), upper=True
-                )
+                L_i = torch.linalg.cholesky(H[i])
+                U[i] = torch.linalg.solve_triangular(L_i, eye[i], upper=False)
                 done = True
             except torch.linalg.LinAlgError:
                 H[i] = damping(H[i])
