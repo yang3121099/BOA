@@ -1,15 +1,17 @@
 #!/bin/bash
 # =============================================================================
-# BOA Quantization Script for Llama2-7b-hf and Qwen3-8B
+# BOA Quantization Script for Llama2-7b-hf, Llama3-8B-Instruct, Qwen3-8B, Qwen3-32B
 # Supports 2, 3, 4-bit weight-only quantization
 #
 # Usage:
-#   bash run_quantize.sh [llama2|qwen3|all] [2|3|4|all]
+#   bash run_quantize.sh [llama2|llama3|qwen3|qwen3-32b|all] [2|3|4|all]
 #
 # Examples:
-#   bash run_quantize.sh all all      # run all models x all bits
-#   bash run_quantize.sh llama2 4     # only Llama2-7b at 4-bit
-#   bash run_quantize.sh qwen3 3      # only Qwen3-8B at 3-bit
+#   bash run_quantize.sh all all         # run all models x all bits
+#   bash run_quantize.sh llama2 4        # only Llama2-7b at 4-bit
+#   bash run_quantize.sh llama3 3        # only Llama3-8B-Instruct at 3-bit
+#   bash run_quantize.sh qwen3 3         # only Qwen3-8B at 3-bit
+#   bash run_quantize.sh qwen3-32b 4     # only Qwen3-32B at 4-bit
 #
 # Model saving:
 #   Set SAVE_DIR to persist quantized models (fake-quantized, same dtype as original).
@@ -35,7 +37,9 @@ set -e
 # For local paths: LLAMA2_PATH="/path/to/Llama-2-7b-hf"
 # For HuggingFace:  LLAMA2_PATH="meta-llama/Llama-2-7b-hf"
 LLAMA2_PATH="${LLAMA2_PATH:-meta-llama/Llama-2-7b-hf}"
+LLAMA3_PATH="${LLAMA3_PATH:-meta-llama/Meta-Llama-3-8B-Instruct}"
 QWEN3_PATH="${QWEN3_PATH:-Qwen/Qwen3-8B}"
+QWEN3_32B_PATH="${QWEN3_32B_PATH:-Qwen/Qwen3-32B}"
 
 # Calibration data: "wikitext2" or "c4"
 CALIB_DATA="${CALIB_DATA:-wikitext2}"
@@ -160,6 +164,35 @@ run_llama2() {
 }
 
 # =============================================================================
+# Llama3-8B-Instruct  (model path contains 'llama' → uses get_llama() loader)
+# =============================================================================
+# Llama 3 uses the same GQA attention architecture as Llama 2, so the same
+# custom modeling and best-config rules apply.
+#   INT2: act_order_col + act_order_row
+#   INT3: act_order_col only
+#   INT4: act_order_col only
+# =============================================================================
+
+run_llama3() {
+    local W_BITS="$1"
+
+    case "${W_BITS}" in
+        2)
+            run_boa "${LLAMA3_PATH}" 2 "--act_order_row" "--act_order_col" "llama3-8b-instruct"
+            ;;
+        3)
+            run_boa "${LLAMA3_PATH}" 3 "" "--act_order_col" "llama3-8b-instruct"
+            ;;
+        4)
+            run_boa "${LLAMA3_PATH}" 4 "" "--act_order_col" "llama3-8b-instruct"
+            ;;
+        *)
+            echo "Unsupported bit-width: ${W_BITS}"; exit 1
+            ;;
+    esac
+}
+
+# =============================================================================
 # Qwen3-8B  (model path must contain 'qwen3' for auto-detection)
 # =============================================================================
 # Best configs from paper (Table: Results on Qwen3 Models):
@@ -187,6 +220,33 @@ run_qwen3() {
     esac
 }
 
+# =============================================================================
+# Qwen3-32B  (model path contains 'qwen3' → uses get_qwen3() loader)
+# =============================================================================
+# Same architecture as Qwen3-8B; best-config flags are identical.
+# Note: 32B requires substantially more VRAM (~80 GB for BF16).
+# Set NUM_WORKERS=7 as usual (same 7-layer-per-block structure).
+# =============================================================================
+
+run_qwen3_32b() {
+    local W_BITS="$1"
+
+    case "${W_BITS}" in
+        2)
+            run_boa "${QWEN3_32B_PATH}" 2 "" "--act_order_col" "qwen3-32b"
+            ;;
+        3)
+            run_boa "${QWEN3_32B_PATH}" 3 "" "--act_order_col" "qwen3-32b"
+            ;;
+        4)
+            run_boa "${QWEN3_32B_PATH}" 4 "" "--act_order_col" "qwen3-32b"
+            ;;
+        *)
+            echo "Unsupported bit-width: ${W_BITS}"; exit 1
+            ;;
+    esac
+}
+
 # -------------------------
 # Main dispatch
 # -------------------------
@@ -200,15 +260,23 @@ for BITS in "${BIT_LIST[@]}"; do
         llama2)
             run_llama2 "${BITS}"
             ;;
+        llama3)
+            run_llama3 "${BITS}"
+            ;;
         qwen3)
             run_qwen3 "${BITS}"
             ;;
+        qwen3-32b)
+            run_qwen3_32b "${BITS}"
+            ;;
         all)
             run_llama2 "${BITS}"
+            run_llama3 "${BITS}"
             run_qwen3 "${BITS}"
+            run_qwen3_32b "${BITS}"
             ;;
         *)
-            echo "Unknown model target '${TARGET_MODEL}'. Choose: llama2 | qwen3 | all"
+            echo "Unknown model target '${TARGET_MODEL}'. Choose: llama2 | llama3 | qwen3 | qwen3-32b | all"
             exit 1
             ;;
     esac
