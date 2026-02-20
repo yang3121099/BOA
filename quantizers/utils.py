@@ -13,7 +13,7 @@ def get_cholesky_of_inverse(H):
     try:
         # Fast path: one batched GPU call — parallelises across heads automatically
         return torch.linalg.cholesky(
-            torch.cholesky_inverse(torch.linalg.cholesky(H)), upper=True
+            torch.linalg.cholesky_inverse(torch.linalg.cholesky(H)), upper=True
         )
     except torch.linalg.LinAlgError:
         pass
@@ -25,7 +25,7 @@ def get_cholesky_of_inverse(H):
         while not done:
             try:
                 U[i] = torch.linalg.cholesky(
-                    torch.cholesky_inverse(torch.linalg.cholesky(H[i])), upper=True
+                    torch.linalg.cholesky_inverse(torch.linalg.cholesky(H[i])), upper=True
                 )
                 done = True
             except torch.linalg.LinAlgError:
